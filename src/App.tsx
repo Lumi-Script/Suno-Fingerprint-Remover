@@ -368,6 +368,10 @@ function App() {
   const [optDeepScan, setOptDeepScan] = useState(true);
   const [optPreserveAudio, setOptPreserveAudio] = useState(true);
   
+  const [filesToProcess, setFilesToProcess] = useState<File[]>([]);
+  const [processedDir, setProcessedDir] = useState<any>(null);
+  const [currentFileIndex, setCurrentFileIndex] = useState(0);
+  
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   const handleDragOver = (e: React.DragEvent) => {
@@ -377,6 +381,34 @@ function App() {
 
   const handleDragLeave = () => {
     setIsDragging(false);
+  };
+
+  const handleSelectFolder = async () => {
+    try {
+      const dirHandle = await (window as any).showDirectoryPicker();
+      const files: File[] = [];
+      
+      for await (const entry of dirHandle.values()) {
+        if (entry.kind === 'file') {
+          const name = entry.name.toLowerCase();
+          if (name.endsWith('.mp3') || name.endsWith('.wav') || name.endsWith('.flac')) {
+            const file = await entry.getFile();
+            files.push(file);
+          }
+        }
+      }
+      
+      if (files.length > 0) {
+        setFilesToProcess(files);
+        setProcessedDir(dirHandle);
+        setFile(files[0]);
+        setProcessState('idle');
+      } else {
+        alert("No supported audio files found in this folder.");
+      }
+    } catch (e) {
+      console.error(e);
+    }
   };
 
   const handleDrop = (e: React.DragEvent) => {
@@ -396,15 +428,31 @@ function App() {
   };
 
   const handleProcess = async () => {
-    if (!file) return;
-    setProcessState('processing');
-    setProgress(5);
+    const files = filesToProcess.length > 0 ? filesToProcess : (file ? [file] : []);
+    if (files.length === 0) return;
     
-    try {
+    setProcessState('processing');
+    
+    let outDir: any = null;
+    if (processedDir) {
+        try {
+            outDir = await processedDir.getDirectoryHandle('processed', { create: true });
+        } catch (e) {
+            console.error(e);
+        }
+    }
+    
+    for (let i = 0; i < files.length; i++) {
+        setCurrentFileIndex(i);
+        const currentInputFile = files[i];
+        setFile(currentInputFile);
+        setProgress(5);
+        
+        try {
       // 1. Read file and extract original quality metadata
       const [arrayBuffer, originalInfo] = await Promise.all([
-          file.arrayBuffer(),
-          getOriginalWavInfo(file)
+          currentInputFile.arrayBuffer(),
+          getOriginalWavInfo(currentInputFile)
       ]);
       setProgress(20);
 
@@ -414,8 +462,8 @@ function App() {
       
       // Calculate true average bitrate for MP3s (solves the VBR problem)
       let targetMp3Bitrate = 320;
-      if (file.name.toLowerCase().endsWith('.mp3')) {
-          targetMp3Bitrate = await calculateTrueMp3Bitrate(file, audioBuffer.duration);
+      if (currentInputFile.name.toLowerCase().endsWith('.mp3')) {
+          targetMp3Bitrate = await calculateTrueMp3Bitrate(currentInputFile, audioBuffer.duration);
           console.log(`Matched MP3 Bitrate: ${targetMp3Bitrate} kbps`);
       }
       
@@ -612,7 +660,7 @@ function App() {
       
       let finalFormat = exportFormat;
       if (finalFormat === 'auto') {
-          finalFormat = file.name.toLowerCase().endsWith('.mp3') ? 'mp3' : 'wav';
+          finalFormat = currentInputFile.name.toLowerCase().endsWith('.mp3') ? 'mp3' : 'wav';
       }
       
       if (mode === 'remover') {
@@ -624,7 +672,15 @@ function App() {
               processedOutputBlob = audioBufferToWav(renderedBuffer, originalInfo.bitDepth, originalInfo.format);
           }
           
-          setProcessedBlob(processedOutputBlob);
+          if (outDir) {
+             const outName = currentInputFile.name.replace(/\.[^/.]+$/, "") + `_cleaned.${finalFormat}`;
+             const fileHandle = await outDir.getFileHandle(outName, { create: true });
+             const writable = await fileHandle.createWritable();
+             await writable.write(processedOutputBlob);
+             await writable.close();
+          } else {
+             setProcessedBlob(processedOutputBlob);
+          }
           // Run analysis on the PROCESSED buffer to see what actually survived
           const processedMagnitudes = detectFrequencies(renderedBuffer, targetFrequencies);
           
@@ -654,14 +710,15 @@ function App() {
           drift: (Math.random() * 0.05).toFixed(2)
       });
 
-      setProgress(100);
-      setProcessState('completed');
-      
     } catch (error) {
-      console.error(error);
-      setProcessState('idle');
-      alert("Error processing audio. Please try another file.");
+      console.error(`Error processing ${currentInputFile.name}:`, error);
+      alert(`Error processing ${currentInputFile.name}. See console.`);
     }
+    
+    } // End of batch loop
+    
+    setProgress(100);
+    setProcessState('completed');
   };
 
   const handleDownload = () => {
@@ -778,23 +835,45 @@ function App() {
             </div>
             <div className="dropzone-text">
               {file ? (
-                <>Selected: <span>{file.name}</span> ({(file.size / 1024 / 1024).toFixed(2)} MB)</>
+                <>
+                  {filesToProcess.length > 0 ? (
+                      <>Batch Folder Selected: <span>{filesToProcess.length} files</span><br />
+                      Current: <span>{file.name}</span> ({(file.size / 1024 / 1024).toFixed(2)} MB)</>
+                  ) : (
+                      <>Selected: <span>{file.name}</span> ({(file.size / 1024 / 1024).toFixed(2)} MB)</>
+                  )}
+                </>
               ) : (
                 <>Drag and drop an audio file here, or <span>click to browse</span></>
               )}
             </div>
           </div>
 
+          <div style={{ textAlign: 'center', marginTop: '1rem', marginBottom: '1rem' }}>
+            <button className="btn-secondary" onClick={(e) => { e.stopPropagation(); handleSelectFolder(); }} style={{ width: '100%' }}>
+              <UploadCloud size={18} /> Select Folder (Batch Process)
+            </button>
+          </div>
+
           <button 
             className="btn-primary" 
             disabled={!file || processState === 'processing'}
-            onClick={handleProcess}
+            onClick={() => {
+                if (processState !== 'processing') {
+                    handleProcess();
+                }
+            }}
             style={{ marginTop: 'auto' }}
           >
             {processState === 'processing' ? (
-              <span className="pulse">Processing... {Math.round(progress)}%</span>
+              <span className="pulse">
+                {filesToProcess.length > 0 ? 
+                  `Processing ${currentFileIndex + 1}/${filesToProcess.length}... ${Math.round(progress)}%` : 
+                  `Processing... ${Math.round(progress)}%`
+                }
+              </span>
             ) : (
-              <><Play size={18} /> {mode === 'remover' ? 'Start Removal' : 'Run Detection'}</>
+              <><Play size={18} /> {mode === 'remover' ? (filesToProcess.length > 0 ? 'Batch Remove' : 'Start Removal') : 'Run Detection'}</>
             )}
           </button>
 
@@ -852,14 +931,25 @@ function App() {
                 </>
               )}
 
-              {mode === 'remover' && processedBlob && (
-                <button 
-                  className="btn-secondary" 
-                  style={{ width: '100%', marginTop: '1.5rem', borderColor: 'var(--success)', color: 'var(--success)' }}
-                  onClick={handleDownload}
-                >
-                  <Download size={18} /> Download Processed File ({(processedBlob.size / 1024 / 1024).toFixed(2)} MB)
-                </button>
+              {mode === 'remover' && (
+                <>
+                  {filesToProcess.length > 0 ? (
+                    <div style={{ textAlign: 'center', marginTop: '1.5rem', color: 'var(--success)', fontWeight: 600 }}>
+                      <CheckCircle size={18} style={{ verticalAlign: 'middle', marginRight: '0.5rem' }} /> 
+                      All {filesToProcess.length} files successfully processed and saved directly to the /processed folder!
+                    </div>
+                  ) : (
+                    processedBlob && (
+                      <button 
+                        className="btn-secondary" 
+                        style={{ width: '100%', marginTop: '1.5rem', borderColor: 'var(--success)', color: 'var(--success)' }}
+                        onClick={handleDownload}
+                      >
+                        <Download size={18} /> Download Processed File ({(processedBlob.size / 1024 / 1024).toFixed(2)} MB)
+                      </button>
+                    )
+                  )}
+                </>
               )}
             </div>
           )}
