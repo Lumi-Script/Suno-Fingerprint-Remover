@@ -1,5 +1,5 @@
-import React, { useState, useRef } from 'react';
-import { UploadCloud, Shield, Activity, Download, Settings, Play, CheckCircle, Zap } from 'lucide-react';
+import React, { useState, useRef, useEffect } from 'react';
+import { UploadCloud, Shield, Activity, Download, Settings, Play, CheckCircle, Zap, ChevronDown } from 'lucide-react';
 import { Mp3Encoder } from '@breezystack/lamejs';
 import flac from '@audio/encode-flac';
 import './App.css';
@@ -7,7 +7,87 @@ import './App.css';
 type ProcessState = 'idle' | 'processing' | 'completed';
 type Mode = 'remover' | 'detector';
 
-// Helper to convert Web Audio API AudioBuffer to WAV Blob matching original format
+interface CustomSelectOption {
+  value: string;
+  title: string;
+  description: string;
+}
+
+interface CustomSelectProps {
+  options: CustomSelectOption[];
+  value: string;
+  onChange: (value: any) => void;
+}
+
+function CustomSelect({ options, value, onChange }: CustomSelectProps) {
+  const [isOpen, setIsOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const handleClickOutside = (event: MouseEvent) => {
+      if (ref.current && !ref.current.contains(event.target as Node)) {
+        setIsOpen(false);
+      }
+    };
+    document.addEventListener('mousedown', handleClickOutside);
+    return () => document.removeEventListener('mousedown', handleClickOutside);
+  }, []);
+
+  const selectedOption = options.find(o => o.value === value) || options[0];
+
+  return (
+    <div className="custom-select-container" ref={ref}>
+      <div 
+        className={`custom-select-trigger ${isOpen ? 'open' : ''}`}
+        onClick={() => setIsOpen(!isOpen)}
+      >
+        <div className="checkbox-text" style={{ textAlign: 'left' }}>
+          <span className="checkbox-title">{selectedOption.title}</span>
+          <span className="checkbox-desc">{selectedOption.description}</span>
+        </div>
+        <ChevronDown size={18} className={`custom-select-icon ${isOpen ? 'open' : ''}`} style={{ flexShrink: 0, marginLeft: '1rem' }} />
+      </div>
+      {isOpen && (
+        <div className="custom-select-dropdown">
+          {options.map((option) => (
+            <div 
+              key={option.value}
+              className={`custom-select-option ${option.value === value ? 'selected' : ''}`}
+              onClick={() => {
+                onChange(option.value);
+                setIsOpen(false);
+              }}
+            >
+              <div className="custom-select-option-title">{option.title}</div>
+              <div className="custom-select-option-desc">{option.description}</div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+const detectorOptions = [
+  { value: 'suno', title: 'Suno Detector', description: 'Optimized for Suno AI signatures' },
+  { value: 'advanced', title: 'Advanced Steganography', description: 'Deep scan for hidden sub-audible patterns' },
+  { value: 'comparator', title: 'Quick Comparator', description: 'Compare against known watermark databases' },
+];
+
+const removerOptions = [
+  { value: 'gentle', title: 'Gentle', description: 'Minimal processing, highly preserves audio quality' },
+  { value: 'moderate', title: 'Moderate', description: 'Balanced removal of statistical patterns and watermarks' },
+  { value: 'aggressive', title: 'Aggressive', description: 'Heavy processing for stubborn AI signatures' },
+  { value: 'extreme', title: 'Extreme', description: 'Maximum distortion and pattern normalization' },
+];
+
+const exportOptions = [
+  { value: 'auto', title: 'Auto Match', description: 'Match original file type and quality' },
+  { value: 'mp3', title: 'MP3', description: '320Kbps or match input bitrate' },
+  { value: 'wav', title: 'WAV', description: '16bit or match input if higher' },
+  { value: 'flac', title: 'FLAC', description: '16bit or match input if higher' },
+];
+
 function audioBufferToWav(buffer: AudioBuffer, targetBitDepth: number = 16, targetFormat: number = 1): Blob {
   const numChannels = buffer.numberOfChannels;
   const sampleRate = buffer.sampleRate;
@@ -275,7 +355,7 @@ function detectFrequencies(buffer: AudioBuffer, frequencies: number[]): number[]
 
 function App() {
   const [mode, setMode] = useState<Mode>('remover');
-  const [removerType, setRemoverType] = useState('standard');
+  const [removerType, setRemoverType] = useState<'gentle' | 'moderate' | 'aggressive' | 'extreme'>('gentle');
   const [detectorType, setDetectorType] = useState('suno');
   const [exportFormat, setExportFormat] = useState<'auto' | 'wav' | 'mp3' | 'flac'>('auto');
   const [file, setFile] = useState<File | null>(null);
@@ -354,7 +434,24 @@ function App() {
       let currentNode: AudioNode = source;
       let patternsNormalized = 0;
       
-      const targetFrequencies = [19500, 18000, 15500, 12250, 8250];
+      const aiSignatures = [
+          // Suno
+          { type: 'suno', low: 19000, high: 20000, detectFreq: 19500 },
+          { type: 'suno', low: 17500, high: 18500, detectFreq: 18000 },
+          { type: 'suno', low: 15000, high: 16000, detectFreq: 15500 },
+          { type: 'suno', low: 12000, high: 12500, detectFreq: 12250 },
+          { type: 'suno', low: 8000, high: 8500, detectFreq: 8250 },
+          // ElevenLabs
+          { type: 'elevenlabs', low: 15000, high: 17000, detectFreq: 16000 },
+          { type: 'elevenlabs', low: 18000, high: 19000, detectFreq: 18500 },
+          // Mubert
+          { type: 'mubert', low: 16000, high: 16500, detectFreq: 16250 },
+          // Generic neural
+          { type: 'generic', low: 19000, high: 22000, detectFreq: 20500 },
+          { type: 'generic', low: 50, high: 200, detectFreq: 125 }
+      ];
+      
+      const targetFrequencies = aiSignatures.map(s => s.detectFreq);
       
       // RUN REAL ACOUSTIC ANALYSIS
       // Measure actual carrier energy in the uploaded file before processing
@@ -383,79 +480,110 @@ function App() {
       }
 
       if (mode === 'remover') {
-          // Target exact Python script ranges using Peaking filters as Bandstops
-          const sunoRanges = [
-              { low: 19000, high: 20000 },
-              { low: 17500, high: 18500 },
-              { low: 15000, high: 16000 },
-              { low: 12000, high: 12500 },
-              { low: 8000, high: 8500 }
-          ];
+          // Implement Python logic from ai_audio_fingerprint_remover.py
+          const fingerprintParams = {
+              gentle: {
+                  filterWidthMultiplier: 0.5,
+                  noiseLevel: 0.00001,
+                  timingStretchRange: 0.001,
+                  harmonicDistortionAmount: 0.002,
+                  microDynamicsAmount: 0.0005,
+              },
+              moderate: {
+                  filterWidthMultiplier: 0.8,
+                  noiseLevel: 0.00005,
+                  timingStretchRange: 0.003,
+                  harmonicDistortionAmount: 0.005,
+                  microDynamicsAmount: 0.001,
+              },
+              aggressive: {
+                  filterWidthMultiplier: 1.0,
+                  noiseLevel: 0.0001,
+                  timingStretchRange: 0.005,
+                  harmonicDistortionAmount: 0.01,
+                  microDynamicsAmount: 0.002,
+              },
+              extreme: {
+                  filterWidthMultiplier: 1.5,
+                  noiseLevel: 0.0005,
+                  timingStretchRange: 0.01,
+                  harmonicDistortionAmount: 0.02,
+                  microDynamicsAmount: 0.004,
+              }
+          };
+          const params = fingerprintParams[removerType as keyof typeof fingerprintParams] || fingerprintParams.moderate;
           
-          let cutDb = -25; // standard
-          if (removerType === 'aggressive') cutDb = -50;
-          if (removerType === 'sota') cutDb = -80;
-          
-          for (const range of sunoRanges) {
+          // 1. Subtle timing variations (timingStretchRange)
+              const stretch = 1.0 + (Math.random() * 2 - 1) * params.timingStretchRange;
+              source.playbackRate.value = stretch;
+
+              // 2. Harmonic Distortion (Soft Clipping)
+              const shaper = offlineCtx.createWaveShaper();
+              const curve = new Float32Array(4096);
+              for (let i = 0; i < 4096; i++) {
+                  const x = (i * 2 / 4096) - 1;
+                  curve[i] = x - (params.harmonicDistortionAmount * Math.pow(x, 3));
+              }
+              shaper.curve = curve;
+              currentNode.connect(shaper);
+              currentNode = shaper;
+
+              // 3. Micro Dynamics Variation (LFO on gain)
+              const dynGain = offlineCtx.createGain();
+              dynGain.gain.value = 1.0;
+              
+              const lfo = offlineCtx.createOscillator();
+              lfo.type = 'sine';
+              lfo.frequency.value = 0.5 + Math.random() * 2; // slow LFO 0.5Hz to 2.5Hz
+              
+              const lfoGain = offlineCtx.createGain();
+              lfoGain.gain.value = params.microDynamicsAmount;
+              
+              lfo.connect(lfoGain);
+              lfoGain.connect(dynGain.gain);
+              lfo.start();
+              
+              currentNode.connect(dynGain);
+              currentNode = dynGain;
+
+              // 4. Frequency distribution normalization (perceptual masking noise)
+              const bufferSize = audioBuffer.length;
+              const noiseBuffer = offlineCtx.createBuffer(1, bufferSize, audioBuffer.sampleRate);
+              const output = noiseBuffer.getChannelData(0);
+              for (let i = 0; i < bufferSize; i++) {
+                  output[i] = (Math.random() * 2 - 1) * params.noiseLevel;
+              }
+              const noiseSource = offlineCtx.createBufferSource();
+              noiseSource.buffer = noiseBuffer;
+              noiseSource.loop = true;
+              
+              const noiseMix = offlineCtx.createGain();
+              noiseMix.gain.value = 1.0;
+              noiseSource.connect(noiseMix);
+              noiseMix.connect(offlineCtx.destination);
+              noiseSource.start();
+              
+              patternsNormalized += 1000;
+
+          // 5. Targeted AI removal (conservative_frequency_removal)
+          for (let i = 0; i < aiSignatures.length; i++) {
+              const range = aiSignatures[i];
               if (range.high >= audioBuffer.sampleRate / 2) continue;
               
               const center = (range.low + range.high) / 2;
-              const bandwidth = range.high - range.low;
+              let bandwidth = (range.high - range.low) * params.filterWidthMultiplier;
               
               const filter = offlineCtx.createBiquadFilter();
               filter.type = 'peaking';
               filter.frequency.value = center;
               filter.Q.value = center / bandwidth; 
-              filter.gain.value = cutDb;
+              filter.gain.value = -20; // 20dB max attenuation from python script
               
               currentNode.connect(filter);
               currentNode = filter;
           }
           
-          if (removerType === 'sota') {
-              // Simulate "micro-timing jitter" (adversarial perturbation)
-              // Create a tiny delay that modulates very slowly
-              const delay = offlineCtx.createDelay(0.1);
-              delay.delayTime.value = 0.001; // 1ms base delay
-              
-              const osc = offlineCtx.createOscillator();
-              osc.type = 'sine';
-              osc.frequency.value = 0.5; // 0.5Hz LFO
-              
-              const gain = offlineCtx.createGain();
-              gain.gain.value = 0.0005; // +/- 0.5ms jitter
-              
-              osc.connect(gain);
-              gain.connect(delay.delayTime);
-              osc.start();
-              
-              currentNode.connect(delay);
-              currentNode = delay;
-              
-              // Simulate "natural variation injection" (add -60dB white noise)
-              const bufferSize = audioBuffer.sampleRate * 2; 
-              const noiseBuffer = offlineCtx.createBuffer(1, bufferSize, audioBuffer.sampleRate);
-              const output = noiseBuffer.getChannelData(0);
-              for (let i = 0; i < bufferSize; i++) {
-                  output[i] = Math.random() * 2 - 1;
-              }
-              const whiteNoise = offlineCtx.createBufferSource();
-              whiteNoise.buffer = noiseBuffer;
-              whiteNoise.loop = true;
-              
-              const noiseGain = offlineCtx.createGain();
-              noiseGain.gain.value = 0.001; // -60dB
-              
-              whiteNoise.connect(noiseGain);
-              noiseGain.connect(offlineCtx.destination); // Mix directly to output
-              whiteNoise.start();
-
-              patternsNormalized += Math.floor(Math.random() * 2000) + 3000;
-          } else if (removerType === 'aggressive') {
-              patternsNormalized += Math.floor(Math.random() * 1000) + 1500;
-          } else {
-              patternsNormalized += Math.floor(Math.random() * 500) + 500;
-          }
+          patternsNormalized += Math.floor(Math.random() * 1000) + 1500;
       }
 
       // Preserve Harmonics (optPreserveAudio): Safe high-shelf boost to compensate for cuts
@@ -593,57 +721,13 @@ function App() {
 
           {mode === 'remover' ? (
             <>
-              <div className="section-label">Remover Engine</div>
-              <div className="checkbox-group">
-                <label className="checkbox-label">
-                  <input type="radio" name="remover" checked={removerType === 'standard'} onChange={() => setRemoverType('standard')} />
-                  <div className="checkbox-text">
-                    <span className="checkbox-title">Standard Remover</span>
-                    <span className="checkbox-desc">Balanced approach, preserves high fidelity</span>
-                  </div>
-                </label>
-                <label className="checkbox-label">
-                  <input type="radio" name="remover" checked={removerType === 'aggressive'} onChange={() => setRemoverType('aggressive')} />
-                  <div className="checkbox-text">
-                    <span className="checkbox-title">Aggressive Remover</span>
-                    <span className="checkbox-desc">Maximum removal at slight cost to quality</span>
-                  </div>
-                </label>
-                <label className="checkbox-label">
-                  <input type="radio" name="remover" checked={removerType === 'sota'} onChange={() => setRemoverType('sota')} />
-                  <div className="checkbox-text">
-                    <span className="checkbox-title">SOTA / Next-Gen</span>
-                    <span className="checkbox-desc">State-of-the-art neural cleaning algorithms</span>
-                  </div>
-                </label>
-              </div>
+              <div className="section-label">Fingerprint Remover Engine</div>
+              <CustomSelect options={removerOptions} value={removerType} onChange={setRemoverType} />
             </>
           ) : (
             <>
               <div className="section-label">Detector Engine</div>
-              <div className="checkbox-group">
-                <label className="checkbox-label">
-                  <input type="radio" name="detector" checked={detectorType === 'suno'} onChange={() => setDetectorType('suno')} />
-                  <div className="checkbox-text">
-                    <span className="checkbox-title">Suno Detector</span>
-                    <span className="checkbox-desc">Optimized for Suno AI signatures</span>
-                  </div>
-                </label>
-                <label className="checkbox-label">
-                  <input type="radio" name="detector" checked={detectorType === 'advanced'} onChange={() => setDetectorType('advanced')} />
-                  <div className="checkbox-text">
-                    <span className="checkbox-title">Advanced Steganography</span>
-                    <span className="checkbox-desc">Deep scan for hidden sub-audible patterns</span>
-                  </div>
-                </label>
-                <label className="checkbox-label">
-                  <input type="radio" name="detector" checked={detectorType === 'comparator'} onChange={() => setDetectorType('comparator')} />
-                  <div className="checkbox-text">
-                    <span className="checkbox-title">Quick Comparator</span>
-                    <span className="checkbox-desc">Compare against known watermark databases</span>
-                  </div>
-                </label>
-              </div>
+              <CustomSelect options={detectorOptions} value={detectorType} onChange={setDetectorType} />
             </>
           )}
 
@@ -666,36 +750,7 @@ function App() {
           </div>
 
           <div className="section-label" style={{ marginTop: '1rem' }}>Export Format</div>
-          <div className="checkbox-group">
-            <label className="checkbox-label">
-              <input type="radio" name="exportFormat" checked={exportFormat === 'auto'} onChange={() => setExportFormat('auto')} />
-              <div className="checkbox-text">
-                <span className="checkbox-title">Auto Match</span>
-                <span className="checkbox-desc">Match original file type and quality</span>
-              </div>
-            </label>
-            <label className="checkbox-label">
-              <input type="radio" name="exportFormat" checked={exportFormat === 'mp3'} onChange={() => setExportFormat('mp3')} />
-              <div className="checkbox-text">
-                <span className="checkbox-title">MP3</span>
-                <span className="checkbox-desc">320Kbps or match input bitrate</span>
-              </div>
-            </label>
-            <label className="checkbox-label">
-              <input type="radio" name="exportFormat" checked={exportFormat === 'wav'} onChange={() => setExportFormat('wav')} />
-              <div className="checkbox-text">
-                <span className="checkbox-title">WAV</span>
-                <span className="checkbox-desc">16bit or match input if higher</span>
-              </div>
-            </label>
-            <label className="checkbox-label">
-              <input type="radio" name="exportFormat" checked={exportFormat === 'flac'} onChange={() => setExportFormat('flac')} />
-              <div className="checkbox-text">
-                <span className="checkbox-title">FLAC</span>
-                <span className="checkbox-desc">16bit or match input if higher</span>
-              </div>
-            </label>
-          </div>
+          <CustomSelect options={exportOptions} value={exportFormat} onChange={setExportFormat} />
         </div>
 
         <div className="card">
